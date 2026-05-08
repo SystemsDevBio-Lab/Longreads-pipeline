@@ -1,0 +1,4 @@
+sample_id	fastq_path	workdir
+250411_01_HT	/home4/gf/data/gf-pipeline/ont/final_pipeline/reference/250411_01_HT.1M.fastq.gz
+250411_01_VT	/home4/gf/data/gf-pipeline/ont/final_pipeline/reference/250411_01_VT.1M.fastq.gz	
+
