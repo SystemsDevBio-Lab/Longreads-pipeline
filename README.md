@@ -107,7 +107,7 @@ per_sample/{sample_id}/
 
 ### 1. Reads deconstruction
 
-BLAZE identifies cell barcodes from long-read single-cell RNA-seq reads and writes deconstructed reads for each sample.
+BLAZE identifies cell barcodes and UMIs from long-read scRNA-seq reads and writes deconstructed reads to a new FASTQ file for each sample.
 
 Output:
 
@@ -165,7 +165,7 @@ multisample/merged_bam/
 
 ### 6. GTF filter and collapse
 
-First-pass transcript GTF files are collapsed into a consensus transcript set. 
+All transcript GTF files from each sample are collapsed into a consensus transcript set. 
 
 Outputs:
 
