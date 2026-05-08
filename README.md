@@ -1,39 +1,28 @@
-# Long-read scRNA-seq Multi-sample Pipeline
+# Long-read scRNA-seq multi-sample assembly and quantification pipeline
 
-This repository contains a fully reorganized long-read single-cell RNA-seq workflow for Oxford Nanopore data. It keeps the original biological logic of your pipeline, but makes the implementation internally consistent, English-only, sample-sheet driven, and easier to run across all 25 samples.
+This repository contains the multi-sample assembly and quantification pipeline used for single-cell long-read RNA-seq data. The workflow starts from per-sample FASTQ files, builds a consensus transcript set across samples, and produces synchronized gene- and transcript-level matrices.
 
-## 1. Design goals
-
-This revision enforces three principles across the entire workflow:
-
-1. **All steps are sample-sheet driven.** No Python script contains hard-coded sample paths or a hard-coded 25-sample dictionary.
-2. **All intermediate files follow a single directory convention.** Per-sample outputs are written under `per_sample/{sample_id}/`, while pooled results are written under `multisample/`.
-3. **The gene branch and transcript branch are explicitly synchronized.** The same `sample_id`, `sampleid_barcode` naming rule, and standardized filenames are used throughout all downstream steps.
-
-## 2. Workflow overview
-
-The end-to-end workflow is:
+## Overview
 
 ```text
-Raw FASTQ
-  -> BLAZE
-  -> minimap2
-  -> samtools
+FASTQ
+  -> BLAZE demultiplexing
+  -> minimap2 alignment
+  -> samtools BAM processing
   -> first-pass IsoQuant
-     -> gene branch: per-sample gene matrices -> merged gene matrix
-     -> transcript branch:
-          per-sample BU tables
-          -> BAM filtering
-          -> pooled BAM merge
-          -> consensus GTF collapse
-          -> GTF to gffutils DB
-          -> second-pass IsoQuant
-          -> final transcript matrix
+     -> gene quantification
+     -> transcript model collection
+  -> consensus transcript collapse
+  -> consensus database construction
+  -> second-pass IsoQuant re-annotation
+  -> final gene and transcript matrices
 ```
 
-## 3. Software
+The workflow keeps per-sample processing separate until transcript models and filtered BAM files are merged for multi-sample analysis.
 
-Recommended environment:
+## Requirements
+
+Recommended software:
 
 ```bash
 conda create -n longreads_env python=3.10 -y
@@ -52,16 +41,14 @@ pip install isoquant
 conda deactivate
 ```
 
-## 4. Required inputs
-
-You need the following files before running the full workflow:
+Required inputs:
 
 - reference genome FASTA
 - reference annotation GTF or IsoQuant-compatible gene database
 - one FASTQ file per sample
-- `metadata/samples.template.tsv`
+- sample sheet with `sample_id`, `fastq_path`, and optional `workdir`
 
-## 5. Standard project layout
+## Project layout
 
 ```text
 project/
@@ -80,10 +67,9 @@ project/
 │   ├── create_db.py
 │   └── transcript_quantification.py
 ├── per_sample/
-│   ├── 241218_01_HT/
-│   ├── 241218_01_VT/
-│   ├── ...
-│   └── 250530_01_VL/
+│   ├── sample1/
+│   ├── sample2/
+│   └── ...
 ├── multisample/
 │   ├── merged_bam/
 │   ├── consensus_gtf/
@@ -94,55 +80,17 @@ project/
 └── run_pipeline.py
 ```
 
-## 6. The 25-sample manifest
+## Sample sheet
 
-Use the following 25 sample IDs consistently everywhere:
-
-```text
-241218_01_HT
-241218_01_VT
-250117_01_Head
-250117_02_Trunk
-250117_01_VL
-250206_01_Head
-250206_02_Trunk
-250206_01_VL
-250411_01_HT
-250411_01_VT
-250414_01_HT
-250414_01_VT
-nao2
-neizang1
-neizang2
-qugan1
-qugan2
-sizhi1
-sizhi2
-241220_01_Head
-241220_01_Trunk
-241220_01_VL
-250530_01_Head
-250530_01_Trunk
-250530_01_VL
-```
-
-A ready-to-edit template with your current FASTQ paths is provided in `metadata/samples.template.tsv`.
-
-The required columns are:
+Use `metadata/samples.template.tsv` to define input files:
 
 ```tsv
 sample_id	fastq_path	workdir
 ```
 
-Notes:
+`sample_id` is used throughout the pipeline for file names and matrix columns. If `workdir` is empty, outputs are written to `per_sample/{sample_id}/`. Relative `workdir` values are resolved under `--project-dir`.
 
-- `sample_id` must match the 25-sample list exactly.
-- `fastq_path` is the absolute or relative path to the sample FASTQ.
-- `workdir` may be left empty. If empty, the pipeline will automatically use `project/per_sample/{sample_id}`. Relative `workdir` values are resolved under `--project-dir`; absolute paths are kept as-is.
-
-## 7. File naming conventions used by every script
-
-For each sample, the pipeline expects or generates the following core files:
+## Core outputs per sample
 
 ```text
 per_sample/{sample_id}/
@@ -157,75 +105,54 @@ per_sample/{sample_id}/
     └── {sample_id}_bu.csv
 ```
 
-This naming scheme is shared across the documentation and all Python scripts.
+## Main steps
 
-## 8. Step-by-step logic
+### 1. BLAZE demultiplexing
 
-### 8.1 BLAZE
-
-Each sample FASTQ is processed independently.
+BLAZE identifies cell barcodes from long-read single-cell RNA-seq reads and writes matched reads for each sample.
 
 Output:
-
-- `{sample_id}_matched_reads.fastq.gz`
-
-### 8.2 minimap2 + samtools
-
-Each matched FASTQ is aligned to the reference genome and converted to sorted/indexed BAM.
-
-Output:
-
-- `{sample_id}_sorted.bam`
-- `{sample_id}_sorted.bam.bai`
-
-### 8.3 First-pass IsoQuant
-
-Each sample is processed independently using the sorted BAM and reference annotation.
-
-Important first-pass outputs:
-
-- `OUT.read_assignments.tsv.gz`
-- `OUT.transcript_model_reads.tsv.gz`
-- `OUT.transcript_models.gtf`
-
-### 8.4 Gene quantification branch
-
-The gene branch uses `OUT.read_assignments.tsv.gz` and applies barcode-UMI deduplication.
-
-Rules:
-
-1. Extract barcode and UMI from `read_id`.
-2. Group reads by barcode-UMI.
-3. Retain a barcode-UMI only if all supporting reads map to exactly one gene.
-4. Count retained molecules into a per-sample gene-by-cell matrix.
-5. Merge all per-sample matrices by taking the union of genes and concatenating columns.
-
-Column naming:
 
 ```text
-{sample_id}_{barcode}
+{sample_id}_matched_reads.fastq.gz
 ```
 
-Final pooled output:
+### 2. Alignment and BAM processing
+
+Matched reads are aligned to the reference genome with minimap2 and converted to sorted, indexed BAM files with samtools.
+
+Outputs:
+
+```text
+{sample_id}_sorted.bam
+{sample_id}_sorted.bam.bai
+```
+
+### 3. First-pass IsoQuant
+
+Each sample is annotated independently with IsoQuant using the sorted BAM and reference annotation.
+
+Key outputs:
+
+```text
+OUT.read_assignments.tsv.gz
+OUT.transcript_model_reads.tsv.gz
+OUT.transcript_models.gtf
+```
+
+### 4. Gene quantification
+
+Gene counts are generated from `OUT.read_assignments.tsv.gz` after barcode-UMI deduplication. A barcode-UMI is retained only when all supporting reads map to one gene. Per-sample matrices are merged by the union of genes and concatenated cell columns.
+
+Final output:
 
 ```text
 multisample/matrices/gene_matrix.csv.gz
 ```
 
-### 8.5 Representative BU generation
+### 5. Representative barcode-UMI table
 
-For transcript-level analysis, each sample generates a representative BU table from:
-
-- `OUT.transcript_model_reads.tsv.gz`
-- `{sample_id}_sorted.bam`
-
-Rules:
-
-1. Keep reads with transcript assignment not equal to `*`.
-2. Add `read_length` from BAM.
-3. Group reads by barcode-UMI.
-4. If one barcode-UMI maps to exactly one transcript, keep the longest read as the representative.
-5. If one barcode-UMI maps to multiple transcripts, mark it as ambiguous.
+For transcript-level quantification, each sample generates a representative barcode-UMI table from `OUT.transcript_model_reads.tsv.gz` and the sorted BAM. Reads assigned to `*` are removed. For barcode-UMIs assigned to a single transcript, the longest read is retained as the representative read. Barcode-UMIs assigned to multiple transcripts are marked as ambiguous.
 
 Output:
 
@@ -239,10 +166,9 @@ Columns:
 bu,barcode,umi,read_id,transcript_id,read_length,status
 ```
 
-### 8.6 BAM filtering and pooled merge
+### 6. BAM filtering and pooled merge
 
-For each sample, the BAM is filtered using `OUT.transcript_model_reads.tsv.gz`.
-Only reads with transcript assignment not equal to `*` are retained.
+Reads with transcript assignment not equal to `*` are retained from each BAM. Filtered BAMs are then merged across samples.
 
 Outputs:
 
@@ -255,21 +181,15 @@ multisample/merged_bam/
 └── all_samples_merged.bam.bai
 ```
 
-### 8.7 Consensus GTF construction
+### 7. Consensus transcript collapse
 
-All first-pass `OUT.transcript_models.gtf` files are read and merged into a consensus transcript set.
+First-pass transcript models are collapsed into a consensus transcript set. Reference transcripts are preserved by transcript ID. Novel transcripts are collapsed by chromosome, strand, exon count, transcript ends, and splice-junction coordinates, with configurable tolerances.
 
-Current rules in the generalized script:
+Default settings:
 
-- reference transcripts are preserved by transcript ID
-- non-reference transcripts can be filtered by per-sample transcript matrix support
-- novel transcripts are collapsed by exon count, chromosome, strand, transcript ends, and splice-junction tolerance
-- a novel transcript must be observed in at least 2 samples to enter the consensus set
-
-Default collapse tolerances:
-
-- transcript end tolerance: 100 bp
-- internal splice junction tolerance: 10 bp
+- transcript-end tolerance: 100 bp
+- internal splice-junction tolerance: 10 bp
+- minimum sample support for novel transcripts: 2 samples
 
 Outputs:
 
@@ -279,76 +199,52 @@ multisample/consensus_gtf/
 └── integrated_statistics.csv
 ```
 
-### 8.8 Consensus DB creation
+### 8. Consensus database
 
-The collapsed consensus GTF is converted into a gffutils SQLite database before reannotation.
-
-Input:
-
-- `multisample/consensus_gtf/integrated_output_filtered.gtf`
+The consensus GTF is converted to a gffutils SQLite database for re-annotation.
 
 Output:
 
 ```text
-multisample/consensus_db/
-└── integrated_output_filtered.db
+multisample/consensus_db/integrated_output_filtered.db
 ```
 
-### 8.9 Second-pass IsoQuant
+### 9. Second-pass IsoQuant re-annotation
 
-The pooled filtered BAM is re-annotated against the consensus database.
+The pooled filtered BAM is re-annotated against the consensus database to assign reads to the consensus transcript set.
 
-Input:
-
-- `multisample/merged_bam/all_samples_merged.bam`
-- `multisample/consensus_db/integrated_output_filtered.db`
-
-Output directory:
+Inputs:
 
 ```text
-multisample/reannotation/OUT/
+multisample/merged_bam/all_samples_merged.bam
+multisample/consensus_db/integrated_output_filtered.db
 ```
 
-Key output used downstream:
+Key output:
 
 ```text
 multisample/reannotation/OUT/OUT.transcript_model_reads.tsv.gz
 ```
 
-### 8.10 Final transcript quantification
+### 10. Final transcript quantification
 
-The final transcript matrix is generated from:
-
-- second-pass `OUT.transcript_model_reads.tsv.gz`
-- all per-sample `{sample_id}_bu.csv` tables
-
-Rules:
-
-1. Keep only read IDs that occur exactly once in the second-pass mapping table.
-2. Discard all multi-mapped transcript assignments.
-3. Map each retained read back to a `sampleid_barcode` column via BU tables.
-4. Build a sparse transcript-by-cell matrix.
+The final transcript matrix is built from the second-pass read assignment table and all per-sample barcode-UMI tables. Only reads with unique transcript assignments are retained. Each retained read is mapped back to a `sampleid_barcode` column before sparse matrix construction.
 
 Outputs:
 
 ```text
 multisample/matrices/
-├── matrix.npz
-├── transcripts.txt
-└── barcodes.txt
+├──transcript_matrix.csv.gz
+├──transcript_matrix.csv
+├──transcript_matrix.mtx
+├──ranscript_matrix_rows.txt
+├──transcript_matrix_cols.txt
+├──matrix.npz
+├──transcripts.txt
+└──barcodes.txt
 ```
 
-## 9. One-command execution
-
-After you place:
-
-- FASTQ files
-- reference genome
-- annotation file
-- scripts
-- `samples.template.tsv`
-
-into the expected structure, you can run the full pipeline with a single command:
+## Run the pipeline
 
 ```bash
 python run_pipeline.py \
@@ -359,73 +255,26 @@ python run_pipeline.py \
   --threads 16
 ```
 
-## 10. Recommended execution order inside `run_pipeline.py`
+## Final deliverables
 
-The integrated runner executes the following stages in order:
-
-1. BLAZE
-2. minimap2
-3. samtools view/sort/index
-4. first-pass IsoQuant
-5. per-sample BU generation
-6. gene matrix generation
-7. BAM filtering and pooled merge
-8. consensus GTF collapse
-9. consensus DB creation
-10. second-pass IsoQuant
-11. final transcript quantification
-
-## 11. Final expected deliverables
-
-After successful completion, the most important files are:
-
-```text
-multisample/matrices/gene_matrix.csv.gz
-multisample/matrices/matrix.npz
-multisample/matrices/transcripts.txt
-multisample/matrices/barcodes.txt
-multisample/consensus_gtf/integrated_output_filtered.gtf
-multisample/consensus_gtf/integrated_statistics.csv
-```
-
-## 12. Practical notes
-
-- All scripts are now English-only.
-- All scripts are CLI-based and reusable across projects.
-- All scripts use `samples.template.tsv` or explicit arguments instead of internal hard-coded paths.
-- The current generalized implementation assumes the BLAZE read header format still contains a 16 bp barcode and 12 bp UMI in the same pattern used by your original pipeline.
-- The second-pass IsoQuant step now uses a gffutils SQLite DB created from the collapsed consensus GTF via `scripts/create_db.py`.
-
-
-
-## Final merged matrix exports
-
-This revision writes synchronized gene and transcript outputs under `multisample/matrices/`.
-
-Shared column definition:
-
-```text
-shared_barcodes.txt
-```
-
-Gene matrix outputs:
+The main outputs are written under `multisample/matrices/` and `multisample/consensus_gtf/`:
 
 ```text
 gene_matrix.csv.gz
-gene_matrix.csv
-gene_matrix.mtx
-gene_matrix_rows.txt
-gene_matrix_cols.txt
-```
-
-Transcript matrix outputs:
-
-```text
 transcript_matrix.csv.gz
-transcript_matrix.csv
 transcript_matrix.mtx
 transcript_matrix_rows.txt
 transcript_matrix_cols.txt
+shared_barcodes.txt
+integrated_output_filtered.gtf
+integrated_statistics.csv
 ```
 
-Both matrices use the same `sampleid_barcode` columns and identical column order. The shared barcode list is built from the union of gene-branch and transcript-BU barcodes, and missing entries are filled with 0.
+Gene and transcript matrices use the same `sampleid_barcode` columns and the same column order. Missing entries are filled with zero.
+
+## Notes
+
+- Scripts are driven by the sample sheet or command-line arguments.
+- Per-sample outputs are kept under `per_sample/{sample_id}/`; pooled outputs are kept under `multisample/`.
+- The pipeline assumes the BLAZE-compatible read header contains the expected cell barcode and UMI fields.
+- Ambiguous transcript assignments are removed from the final transcript matrix.
