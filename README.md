@@ -128,7 +128,7 @@ Outputs:
 
 ### 3. Transcripts annotation
 
-Each sample is annotated independently with IsoQuant using the sorted BAM and reference annotation.
+Each sample is annotated independently with IsoQuant using the sorted BAM and reference files.
 
 Key outputs:
 
@@ -140,7 +140,7 @@ OUT.transcript_models.gtf
 
 ### 4. Gene quantification
 
-Gene counts are generated from `OUT.read_assignments.tsv.gz` after barcode-UMI deduplication. A barcode-UMI is retained only when all supporting reads map to one gene. Per-sample matrices are merged by the union of genes and concatenated cell columns.
+Gene counts are generated from `OUT.read_assignments.tsv.gz` after barcode-UMI deduplication. A barcode-UMI is retained only when all supporting reads map to one gene. 
 
 Final output:
 
@@ -150,7 +150,7 @@ multisample/matrices/gene_matrix.csv.gz
 
 ### 5. BAM filter and merge
 
-Reads with transcript assignment not equal to `*` are retained from each BAM. Filtered BAMs are then merged across samples.
+Reads with transcript assignment not equal to `*` are retained from each BAM. Filtered BAM files are then merged across samples.
 
 Outputs:
 
@@ -177,7 +177,7 @@ multisample/consensus_gtf/
 
 ### 7. Transcripts re-annotation
 
-The merged BAM is re-annotated against the collapsed GTF.
+The merged BAM is re-annotated against the collapsed GTF by IsoQuant.
 
 Inputs:
 
@@ -194,7 +194,7 @@ multisample/reannotation/OUT/OUT.transcript_model_reads.tsv.gz
 
 ### 8. Transcripts quantification
 
-The final transcript matrix is built from the transcripts re-annotation table and all per-sample barcode-UMI tables. 
+The final transcript matrix is built from the transcripts re-annotation table. 
 
 Outputs:
 
