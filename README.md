@@ -6,16 +6,14 @@ This repository contains the multi-sample assembly and quantification pipeline u
 
 ```text
 FASTQ
-  -> BLAZE demultiplexing
-  -> minimap2 alignment
-  -> samtools BAM processing
-  -> first-pass IsoQuant
-     -> gene quantification
-     -> transcript model collection
-  -> consensus transcript collapse
-  -> consensus database construction
-  -> second-pass IsoQuant re-annotation
-  -> final gene and transcript matrices
+  -> Reads deconstruction
+  -> Reads mapping
+  -> Transcripts annotation
+  -> gene quantification
+  -> BAM filter and merge
+  -> GTF filter and collapse
+  -> Transcripts re-annotation
+  -> Transcripts quantification 
 ```
 
 The workflow keeps per-sample processing separate until transcript models and filtered BAM files are merged for multi-sample analysis.
