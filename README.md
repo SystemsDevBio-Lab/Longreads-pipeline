@@ -107,9 +107,9 @@ per_sample/{sample_id}/
 
 ## Main steps
 
-### 1. BLAZE demultiplexing
+### 1. Reads deconstruction
 
-BLAZE identifies cell barcodes from long-read single-cell RNA-seq reads and writes matched reads for each sample.
+BLAZE identifies cell barcodes from long-read single-cell RNA-seq reads and writes deconstructed reads for each sample.
 
 Output:
 
@@ -117,9 +117,9 @@ Output:
 {sample_id}_matched_reads.fastq.gz
 ```
 
-### 2. Alignment and BAM processing
+### 2. Reads mapping
 
-Matched reads are aligned to the reference genome with minimap2 and converted to sorted, indexed BAM files with samtools.
+Reads are aligned to the reference genome with minimap2 and converted to sorted, indexed BAM files with samtools.
 
 Outputs:
 
@@ -128,7 +128,7 @@ Outputs:
 {sample_id}_sorted.bam.bai
 ```
 
-### 3. First-pass IsoQuant
+### 3. Transcripts annotation
 
 Each sample is annotated independently with IsoQuant using the sorted BAM and reference annotation.
 
@@ -150,23 +150,7 @@ Final output:
 multisample/matrices/gene_matrix.csv.gz
 ```
 
-### 5. Representative barcode-UMI table
-
-For transcript-level quantification, each sample generates a representative barcode-UMI table from `OUT.transcript_model_reads.tsv.gz` and the sorted BAM. Reads assigned to `*` are removed. For barcode-UMIs assigned to a single transcript, the longest read is retained as the representative read. Barcode-UMIs assigned to multiple transcripts are marked as ambiguous.
-
-Output:
-
-```text
-per_sample/{sample_id}/OUT/{sample_id}_bu.csv
-```
-
-Columns:
-
-```text
-bu,barcode,umi,read_id,transcript_id,read_length,status
-```
-
-### 6. BAM filtering and pooled merge
+### 5. BAM filter and merge
 
 Reads with transcript assignment not equal to `*` are retained from each BAM. Filtered BAMs are then merged across samples.
 
@@ -181,15 +165,9 @@ multisample/merged_bam/
 └── all_samples_merged.bam.bai
 ```
 
-### 7. Consensus transcript collapse
+### 6. GTF filter and collapse
 
-First-pass transcript models are collapsed into a consensus transcript set. Reference transcripts are preserved by transcript ID. Novel transcripts are collapsed by chromosome, strand, exon count, transcript ends, and splice-junction coordinates, with configurable tolerances.
-
-Default settings:
-
-- transcript-end tolerance: 100 bp
-- internal splice-junction tolerance: 10 bp
-- minimum sample support for novel transcripts: 2 samples
+First-pass transcript GTF files are collapsed into a consensus transcript set. 
 
 Outputs:
 
@@ -199,19 +177,9 @@ multisample/consensus_gtf/
 └── integrated_statistics.csv
 ```
 
-### 8. Consensus database
+### 7. Transcripts re-annotation
 
-The consensus GTF is converted to a gffutils SQLite database for re-annotation.
-
-Output:
-
-```text
-multisample/consensus_db/integrated_output_filtered.db
-```
-
-### 9. Second-pass IsoQuant re-annotation
-
-The pooled filtered BAM is re-annotated against the consensus database to assign reads to the consensus transcript set.
+The merged BAM is re-annotated against the collapsed GTF.
 
 Inputs:
 
@@ -226,9 +194,9 @@ Key output:
 multisample/reannotation/OUT/OUT.transcript_model_reads.tsv.gz
 ```
 
-### 10. Final transcript quantification
+### 8. Transcripts quantification
 
-The final transcript matrix is built from the second-pass read assignment table and all per-sample barcode-UMI tables. Only reads with unique transcript assignments are retained. Each retained read is mapped back to a `sampleid_barcode` column before sparse matrix construction.
+The final transcript matrix is built from the transcripts re-annotation table and all per-sample barcode-UMI tables. 
 
 Outputs:
 
@@ -272,9 +240,3 @@ integrated_statistics.csv
 
 Gene and transcript matrices use the same `sampleid_barcode` columns and the same column order. Missing entries are filled with zero.
 
-## Notes
-
-- Scripts are driven by the sample sheet or command-line arguments.
-- Per-sample outputs are kept under `per_sample/{sample_id}/`; pooled outputs are kept under `multisample/`.
-- The pipeline assumes the BLAZE-compatible read header contains the expected cell barcode and UMI fields.
-- Ambiguous transcript assignments are removed from the final transcript matrix.
